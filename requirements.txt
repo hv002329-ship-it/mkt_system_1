@@ -2,7 +2,7 @@ streamlit
 pandas
 gspread
 google-auth
-google-generativeai
+google-genai
 pytz
 requests
 beautifulsoup4
