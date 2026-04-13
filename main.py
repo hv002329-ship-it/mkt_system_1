@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import time, datetime, random, statistics, re, requests, html, pytz, gc, unicodedata
 from bs4 import BeautifulSoup
 import smtplib
