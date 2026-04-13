@@ -3,6 +3,6 @@ pandas
 gspread
 google-auth
 google-genai
-pytz
-requests
 beautifulsoup4
+requests
+pytz
