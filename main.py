@@ -92,7 +92,7 @@ def post_to_cms(website_row, title, html_content, dash_config):
             return True, f"Bắn Blogspot OK: {blog_receiver}"
         except Exception as e: return False, f"Lỗi Mail: {e}"
     else:
-        domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split()[0].strip()
+        domain = str(website_row.get('WS_LINK_IN_BACKLINK', '')).split(',')[0].strip()
         if not domain: return False, "Thiếu domain WP."
         try:
             res = requests.post(f"{domain.rstrip('/')}/wp-json/wp/v2/posts", auth=(u, p), json={'title': title, 'content': html_content, 'status': 'publish'}, timeout=30)
@@ -271,9 +271,6 @@ class AutoSEOPipeline:
         if s_key:
             self.add_log(ui_log, f"🕵️ [SERP] Quét data qua Serper.dev...", "detail")
             
-            # ---------------------------------------------------------
-            # BẢN VÁ LỖI 4: VÒNG LẶP CÀO ÉP ĐỦ 3 BÀI TỪ NHIỀU NGUỒN
-            # ---------------------------------------------------------
             all_urls = []
             for kw in self.all_topic_kws[:2]:
                 try:
@@ -286,13 +283,12 @@ class AutoSEOPipeline:
                 except Exception as e:
                     self.add_log(ui_log, f"⚠️ Lỗi kết nối Serper cho từ khóa '{kw}': {e}", "warn")
             
-            unique_urls = list(dict.fromkeys(all_urls)) # Xóa trùng lặp
-            # Đưa các URL của đối thủ (c_list) lên ưu tiên hàng đầu, các URL khác xếp sau
+            unique_urls = list(dict.fromkeys(all_urls))
             prioritized_urls = [u for u in unique_urls if any(c in u for c in c_list)] + [u for u in unique_urls if not any(c in u for c in c_list)]
             
             successful_scrapes = 0
             for t_link in prioritized_urls:
-                if successful_scrapes >= 3: break # Ép cào đủ 3 bài là dừng
+                if successful_scrapes >= 3: break 
                 try:
                     rh = requests.get(t_link, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
                     if rh.status_code == 200:
@@ -307,7 +303,6 @@ class AutoSEOPipeline:
                         self.add_log(ui_log, f"⚠️ Web chặn Bot (Status {rh.status_code}): {t_link}", "warn")
                 except Exception as e:
                     self.add_log(ui_log, f"⚠️ Timeout/Lỗi cào Web: {t_link} -> Bỏ qua, thử link khác.", "warn")
-            # ---------------------------------------------------------
 
             if serp_chunks:
                 raw_serp_text = "\n\n".join(serp_chunks)[:3000]
@@ -317,10 +312,11 @@ class AutoSEOPipeline:
                 gem_keys = [k.strip() for k in str(self.dashboard.get('GEMINI_API_KEY', '')).split(',') if k.strip()]
                 if gem_keys:
                     try:
-                        genai.configure(api_key=gem_keys[0])
+                        # Cập nhật chuẩn SDK google-genai mới
+                        client = genai.Client(api_key=gem_keys[0])
                         prompt_style = f"Phân tích ngắn gọn thuật ngữ ngành, góc nhìn và nhịp điệu của các đối thủ sau:\n\nData:\n{raw_serp_text}"
                         with concurrent.futures.ThreadPoolExecutor() as ex:
-                            self.serp_style = ex.submit(lambda: genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt_style).text).result(timeout=15)
+                            self.serp_style = ex.submit(lambda: client.models.generate_content(model='gemini-1.5-flash', contents=prompt_style).text).result(timeout=15)
                     except: self.serp_style = "Văn phong chuyên gia, logic, chia sẻ kiến thức."
                 else: self.serp_style = "Văn phong chuyên gia, logic, chia sẻ kiến thức."
                 self.add_log(ui_log, f"🎯 [SERP_STYLE_AI_EXTRACT]:\n{self.serp_style}", "detail")
@@ -354,9 +350,6 @@ class AutoSEOPipeline:
         
         h3_instruction = f"TẠI ĐÚNG 2 THẺ H2 BẤT KỲ TRONG BÀI, bạn bắt buộc phải chia nhỏ nội dung xuống thành 2-3 thẻ <h3>. Các thẻ H2 còn lại chỉ dùng thẻ <p> hoặc <ul>."
         
-        # ---------------------------------------------------------
-        # BẢN VÁ LỖI 1: LỆNH TỬ THẦN KHÓA ĐỘ DÀI TIÊU ĐỀ H1
-        # ---------------------------------------------------------
         math_skeleton = f"""
         [BỘ LỆNH TOÁN HỌC ĐIỀU KHIỂN CẤU TRÚC - TUYỆT ĐỐI TUÂN THỦ]:
         1. KIỂM SOÁT ĐỘ DÀI TOÀN BÀI: Tổng số chữ chỉ được dao động quanh {self.target_wc} chữ. CẤM VIẾT LAN MAN VƯỢT QUÁ {self.max_w} CHỮ.
@@ -394,14 +387,20 @@ class AutoSEOPipeline:
         or_mods = [m.strip() for m in str(self.dashboard.get('OPENROUTER_MODEL', 'openai/gpt-4o-mini')).split(',') if m.strip()]
 
         response_text = None
+        
+        # Cập nhật chuẩn gọi SDK google-genai mới
         for gm in gem_mods:
             for gk in gem_keys:
                 if response_text: break
-                genai.configure(api_key=gk)
                 self.add_log(ui_log, f"🌐 [API CALL] Gemini ({gm}) [Max: 8192 Tokens]...", "detail")
                 try:
+                    client = genai.Client(api_key=gk)
                     with concurrent.futures.ThreadPoolExecutor() as ex:
-                        response_text = ex.submit(lambda: genai.GenerativeModel(gm).generate_content(m_prompt, generation_config=genai.types.GenerationConfig(max_output_tokens=8192)).text).result(timeout=120)
+                        response_text = ex.submit(lambda: client.models.generate_content(
+                            model=gm, 
+                            contents=m_prompt, 
+                            config=types.GenerateContentConfig(max_output_tokens=8192)
+                        ).text).result(timeout=120)
                 except Exception as e:
                     self.add_log(ui_log, f"⚠️ Gemini sập (429/Timeout). Đang chuyển...", "warn")
             if response_text: break
@@ -528,13 +527,9 @@ class AutoSEOPipeline:
         total_links_needed = min(self.out_lim + self.in_lim, len(self.all_topic_kws))
         kws_to_inject = self.all_topic_kws[:total_links_needed]
         
-        # ---------------------------------------------------------
-        # BẢN VÁ LỖI 3: PHÂN BỔ TỪ KHÓA ĐỀU KHẮP BÀI, TRÁNH DÍNH CHÙM
-        # ---------------------------------------------------------
         avail_p = [p for p in soup.find_all(['p', 'li']) if len(p.get_text(strip=True)) > 20 and not p.find('a') and not p.find('img')]
 
         if avail_p and kws_to_inject:
-            # Tính toán khoảng cách đều nhau giữa các đoạn văn
             spacing = max(1, len(avail_p) // len(kws_to_inject))
             used_p_indices = set()
 
@@ -546,10 +541,8 @@ class AutoSEOPipeline:
 
                 injected = False
                 
-                # Tính vị trí lý tưởng để nhét câu (Rải đều từ đầu đến cuối)
                 ideal_idx = min(i * spacing + (spacing // 2), len(avail_p) - 1)
                 
-                # Tìm thẻ <p> gần nhất chưa bị nhét câu nối
                 target_idx = ideal_idx
                 for offset in range(len(avail_p)):
                     test_idx = (ideal_idx + offset) % len(avail_p)
@@ -560,12 +553,10 @@ class AutoSEOPipeline:
                 target_p = avail_p[target_idx]
                 used_p_indices.add(target_idx)
 
-                # Dò xem có tự nhiên trùng từ khóa trong thẻ <p> này không
                 if re.search(re.escape(k), target_p.get_text(), flags=re.IGNORECASE):
                     target_p.replace_with(BeautifulSoup(re.sub(re.escape(k), lambda m: f"<a href='{url}'>{m.group(0)}</a>", str(target_p), count=1, flags=re.IGNORECASE), 'html.parser'))
                     injected = True
 
-                # Nếu AI lười, Python tự đúc câu nối và nhét vào thẻ <p> đã định vị
                 if not injected:
                     fallback_sentences = [
                         f" Song song đó, yếu tố cốt lõi liên quan đến {k} luôn được các chuyên gia đánh giá cao.",
@@ -581,7 +572,6 @@ class AutoSEOPipeline:
                 self.injected_kws_list.append(k)
                 if is_e: self.injected_ext += 1
                 else: self.injected_int += 1
-        # ---------------------------------------------------------
 
         self.add_log(ui_log, f"🛠️ [GẮN LINK] Chốt: {self.injected_ext}/{self.out_lim} Ext | {self.injected_int}/{self.in_lim} Int. Tổng dùng {len(self.injected_kws_list)} từ khóa.", "success")
 
@@ -610,9 +600,6 @@ class AutoSEOPipeline:
         else:
             img_max_w = ws_banner
 
-        # ---------------------------------------------------------
-        # BẢN VÁ LỖI 4: ÉP ẢNH THEO VỊ TRÍ THẺ H2, CHỐNG DÍNH CHÙM
-        # ---------------------------------------------------------
         if self.used_imgs:
             h2_tags = soup.find_all('h2')
             fallback_p_tags = soup.find_all('p')
@@ -624,22 +611,19 @@ class AutoSEOPipeline:
 
                 if h2_tags:
                     if i == 0:
-                        target_tag = h2_tags[0] # Ảnh 1 cắm dưới H2 đầu tiên
+                        target_tag = h2_tags[0] 
                     elif i == 1:
-                        target_tag = h2_tags[2] if len(h2_tags) >= 3 else h2_tags[-1] # Ảnh 2 cắm dưới H2 thứ 3
+                        target_tag = h2_tags[2] if len(h2_tags) >= 3 else h2_tags[-1] 
                     else:
                         target_tag = h2_tags[-1]
                     
-                    # Kiểm tra an toàn: Nếu chỗ này chưa có ảnh thì mới cắm
                     if not target_tag.find_next_sibling('div', style=re.compile("text-align: center")):
                         target_tag.insert_after(BeautifulSoup(img_html, 'html.parser'))
                         inserted = True
 
                 if not inserted and fallback_p_tags:
-                    # Rớt vào đây nếu không có thẻ H2 nào (hoặc bị trùng), fallback rải đều theo thẻ p
                     target_p_idx = min((i+1) * 3, len(fallback_p_tags) - 1)
                     fallback_p_tags[target_p_idx].insert_after(BeautifulSoup(img_html, 'html.parser'))
-        # ---------------------------------------------------------
 
         if self.failed_imgs: self.add_log(ui_log, f"⚠️ Đã loại {len(self.failed_imgs)} ảnh lỗi hoặc không cho phép load.", "warn")
         self.add_log(ui_log, f"🖼️ [GẮN ẢNH] DOM Inject thành công {len(self.used_imgs)} ảnh (Max-width: {img_max_w} | Luật Anti-Clump theo H2: Bật).")
@@ -1111,4 +1095,3 @@ with tab2:
 
 with tab3:
     st.dataframe(df_rep, use_container_width=True)
-
