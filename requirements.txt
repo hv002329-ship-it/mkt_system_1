@@ -1,1 +1,8 @@
-
+streamlit
+pandas
+gspread
+google-auth
+google-generativeai
+pytz
+requests
+beautifulsoup4
